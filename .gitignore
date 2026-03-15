@@ -1,0 +1,37 @@
+# .gitignore for Backup Manager
+
+# Ignore backup archives and incremental backups
+
+configs/*.conf~
+*.tar.gz
+*.tar.xz
+*.bak
+
+# Ignore temporary files
+
+*.swp
+*.swo
+*.tmp
+*.DS_Store
+
+# Ignore any system files
+
+Thumbs.db
+*.log
+
+# Ignore compiled files or scripts outputs (if any)
+
+*.out
+*.o
+*.class
+
+# Ignore any user-specific files
+
+*.env
+*.local
+
+# Keep the script and README tracked
+
+!backup_manager.sh
+!README.md
+!configs/example.conf
