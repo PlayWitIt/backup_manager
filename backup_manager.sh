@@ -18,36 +18,40 @@ if [ ${#CONF_FILES[@]} -eq 0 ]; then
 fi
 
 # ------------------------------
-# Step 1: Ask user which config to run
+# Step 1: Determine which config to run
 # ------------------------------
-echo "Available backup configurations:"
-for i in "${!CONF_FILES[@]}"; do
-    echo "[$i] $(basename "${CONF_FILES[$i]}")"
-done
+if [ ${#CONF_FILES[@]} -eq 1 ]; then
+    CONFIG_FILE="${CONF_FILES[0]}"
+    echo "Only one configuration found. Using: $(basename "$CONFIG_FILE")"
+else
+    echo "Available backup configurations:"
+    for i in "${!CONF_FILES[@]}"; do
+        echo "[$i] $(basename "${CONF_FILES[$i]}")"
+    done
 
-read -p "Select a configuration to run (number): " index
-if ! [[ "$index" =~ ^[0-9]+$ ]] || [ "$index" -ge "${#CONF_FILES[@]}" ]; then
-    echo "Error: Invalid selection."
-    exit 1
+    read -p "Select a configuration to run (number): " index
+    if ! [[ "$index" =~ ^[0-9]+$ ]] || [ "$index" -ge "${#CONF_FILES[@]}" ]; then
+        echo "Error: Invalid selection."
+        exit 1
+    fi
+
+    CONFIG_FILE="${CONF_FILES[$index]}"
+    echo "Using configuration: $(basename "$CONFIG_FILE")"
 fi
 
-CONFIG_FILE="${CONF_FILES[$index]}"
-echo "Using configuration: $CONFIG_FILE"
-
 # ------------------------------
-# Step 2: Load config safely
+# Step 2: Load configuration
 # ------------------------------
 source "$CONFIG_FILE"
 
 # ------------------------------
-# Step 3: Validate at least one path exists
+# Step 3: Validate paths
 # ------------------------------
 if [ -z "$SOURCE" ] && [ -z "$ARCHIVE_FOLDER" ]; then
     echo "Error: Both SOURCE and ARCHIVE_FOLDER are empty. Nothing to do!"
     exit 1
 fi
 
-# If SOURCE is defined, check it exists
 if [ -n "$SOURCE" ] && [ ! -d "$SOURCE" ]; then
     echo "Error: SOURCE folder '$SOURCE' does not exist!"
     exit 1
@@ -64,45 +68,42 @@ if [[ "$choice" != "y" ]]; then
 fi
 
 # ------------------------------
-# Step 4: Rsync incremental backup if SOURCE is set
+# Step 4: Rsync incremental backup
 # ------------------------------
-if [ -n "$SOURCE" ]; then
-    if [ -z "$BACKUP_FOLDER" ]; then
-        echo "Warning: BACKUP_FOLDER not set — skipping incremental backup."
+if [ -n "$SOURCE" ] && [ -n "$BACKUP_FOLDER" ]; then
+    mkdir -p "$BACKUP_FOLDER" || { echo "Error: Could not create BACKUP_FOLDER!"; exit 1; }
+    echo "Running incremental backup with rsync..."
+    rsync -av --progress --exclude='*.tmp' --exclude='*.swp' --exclude='*.DS_Store' --exclude='*.log' --exclude='*.bak' "$SOURCE/" "$BACKUP_FOLDER/"
+    RSYNC_EXIT=$?
+    if [ $RSYNC_EXIT -eq 0 ] || [ $RSYNC_EXIT -eq 24 ]; then
+        echo "Rsync completed (some files may have vanished, see warnings above)."
     else
-        mkdir -p "$BACKUP_FOLDER" || { echo "Error: Could not create BACKUP_FOLDER!"; exit 1; }
-        echo "Running incremental backup with rsync..."
-        if ! rsync -av --progress "$SOURCE/" "$BACKUP_FOLDER/"; then
-            echo "Error: Rsync failed!"
-            exit 1
-        fi
+        echo "Error: Rsync failed with code $RSYNC_EXIT!"
+        exit 1
     fi
+elif [ -n "$SOURCE" ]; then
+    echo "Warning: BACKUP_FOLDER not set — skipping incremental backup."
 else
     echo "SOURCE not set — skipping incremental backup."
 fi
 
 # ------------------------------
-# Step 5: Archive if ARCHIVE_FOLDER is set
+# Step 5: Archive
 # ------------------------------
 if [ -n "$ARCHIVE_FOLDER" ]; then
     mkdir -p "$ARCHIVE_FOLDER" || { echo "Error: Could not create ARCHIVE_FOLDER!"; exit 1; }
     TIMESTAMP=$(date +%F)
 
-    # If SOURCE is set and BACKUP_FOLDER exists, archive that; otherwise archive SOURCE directly
-    if [ -n "$SOURCE" ] && [ -n "$BACKUP_FOLDER" ]; then
+    if [ -n "$SOURCE" ] && [ -n "$BACKUP_FOLDER" ] && [ -d "$BACKUP_FOLDER" ]; then
         ARCHIVE_NAME="$(basename "$SOURCE")_$TIMESTAMP.tar.gz"
         echo "Compressing backup folder '$BACKUP_FOLDER' into $ARCHIVE_NAME..."
-        if ! tar -czvf "$ARCHIVE_FOLDER/$ARCHIVE_NAME" -C "$BACKUP_FOLDER" .; then
-            echo "Error: Failed to create archive from backup folder!"
-            exit 1
-        fi
-    else
-        ARCHIVE_NAME="Archive_$(date +%F).tar.gz"
+        tar -czvf "$ARCHIVE_FOLDER/$ARCHIVE_NAME" -C "$BACKUP_FOLDER" . || { echo "Error: Failed to create archive from backup folder!"; exit 1; }
+    elif [ -n "$SOURCE" ] && [ -d "$SOURCE" ]; then
+        ARCHIVE_NAME="$(basename "$SOURCE")_$TIMESTAMP.tar.gz"
         echo "Compressing source folder '$SOURCE' directly into $ARCHIVE_NAME..."
-        if ! tar -czvf "$ARCHIVE_FOLDER/$ARCHIVE_NAME" -C "$(dirname "$SOURCE")" "$(basename "$SOURCE")"; then
-            echo "Error: Failed to create archive from source folder!"
-            exit 1
-        fi
+        tar -czvf "$ARCHIVE_FOLDER/$ARCHIVE_NAME" -C "$(dirname "$SOURCE")" "$(basename "$SOURCE")" || { echo "Error: Failed to create archive from source folder!"; exit 1; }
+    else
+        echo "Warning: Nothing available to archive. Skipping archive step."
     fi
 else
     echo "ARCHIVE_FOLDER not set — skipping archive step."

@@ -27,6 +27,8 @@ Thumbs.db
 
 # Ignore any user-specific files
 
+TODO.md
+diff.txt
 *.env
 *.local
 
