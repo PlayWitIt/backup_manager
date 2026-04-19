@@ -17,10 +17,12 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll, Vertical, Grid, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Header, Footer, DataTable, Button, Log, TabbedContent, TabPane, Markdown, Tree, Input, Label, Static
+    Header, Footer, DataTable, Button, Log, TabbedContent, TabPane, Markdown, Tree, Input, Label, Static, DirectoryTree
 )
+from textual.events import Key as KeyEvent
 from textual.message import Message
 from textual.reactive import reactive
+from textual.widgets._data_table import RowKey, ColumnKey
 
 # Data classes to manage the application's state cleanly
 @dataclass
@@ -90,33 +92,139 @@ def validate_paths(source: str, backup_folder: str, archive_folder: str) -> tupl
 # ------------------------------
 # THE NEW JOB CREATION FORM
 # ------------------------------
+class DirectoryPicker(ModalScreen):
+    """A file/directory picker modal."""
+    def __init__(self, initial_path: str = "/"):
+        super().__init__()
+        self.initial_path = initial_path
+        self.selected_path: Path | None = None
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+        with Container(id="picker-container"):
+            yield Label("Select a folder - Enter or Confirm to select | Escape to cancel | Backspace to go up | N for new folder", id="picker-label")
+            yield DirectoryTree("/", id="dir-tree")
+            with Horizontal(id="new-folder-row"):
+                yield Input(placeholder="New folder name...", id="new-folder-name")
+                yield Button("Create Folder", variant="primary", id="create-folder")
+            with Horizontal(id="picker-buttons"):
+                yield Button("Confirm", variant="success", id="confirm")
+                yield Button("Cancel", variant="error", id="cancel-picker")
+
+    def on_mount(self) -> None:
+        tree = self.query_one("#dir-tree", DirectoryTree)
+        if self.initial_path and self.initial_path != "/":
+            try:
+                tree.expand(self.initial_path)
+                tree.select(self.initial_path)
+            except Exception:
+                pass
+
+    def on_directory_tree_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        event.stop()
+        self.selected_path = event.path
+
+    def on_key(self, event: KeyEvent) -> None:
+        if event.key == "escape":
+            self.app.pop_screen()
+        elif event.key == "enter":
+            self._confirm_selection()
+        elif event.key == "backspace":
+            tree = self.query_one("#dir-tree", DirectoryTree)
+            current = tree.cursor_node
+            if current and current.data:
+                parent_path = current.data.path.parent
+                if parent_path != current.data.path:
+                    tree.select(parent_path)
+                    tree.expand(parent_path)
+        elif event.key == "n":
+            self.query_one("#new-folder-name", Input).focus()
+
+    def _confirm_selection(self) -> None:
+        tree = self.query_one("#dir-tree", DirectoryTree)
+        current = tree.cursor_node
+        if current and current.data:
+            self.dismiss(current.data.path)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "confirm":
+            self._confirm_selection()
+        elif event.button.id == "cancel-picker":
+            self.app.pop_screen()
+        elif event.button.id == "create-folder":
+            tree = self.query_one("#dir-tree", DirectoryTree)
+            new_folder = self.query_one("#new-folder-name", Input).value.strip()
+            if not new_folder:
+                return
+            current = tree.cursor_node
+            if current and current.data:
+                import os
+                parent_path = str(current.data.path)
+                new_path = os.path.join(parent_path, new_folder)
+                try:
+                    os.makedirs(new_path, exist_ok=True)
+                    tree.reload()
+                    tree.expand(parent_path)
+                    # Refresh and select the new folder
+                    def select_new():
+                        for node in tree.root.iter_all_children():
+                            if node.data and str(node.data.path) == new_path:
+                                tree.select(node)
+                                break
+                    self.call_later(select_new)
+                    self.query_one("#new-folder-name", Input).value = ""
+                except Exception as e:
+                    self.query_one("#picker-label", Label).update(f"Error creating folder: {e}")
+
+
 class JobForm(ModalScreen):
     """A modal screen that appears for creating a new backup job."""
 
     def compose(self) -> ComposeResult:
-        with Grid(id="job-form"):
+        with Vertical(id="job-form"):
+            yield Label("Create New Backup Job", classes="form-title")
+            
             yield Label("Job Name:", classes="form-label")
             yield Input(placeholder="e.g., My Website", id="name", classes="form-input")
 
             yield Label("Source Folder:", classes="form-label")
-            yield Input(placeholder="/path/to/your/project", id="source", classes="form-input")
+            with Horizontal(classes="browse-row"):
+                yield Input(placeholder="/path/to/your/project", id="source", classes="form-input")
+                yield Button("Browse", variant="primary", id="browse-source")
 
             yield Label("Backup Folder (Incremental):", classes="form-label")
-            yield Input(placeholder="/path/to/incremental/backups", id="backup_folder", classes="form-input")
+            with Horizontal(classes="browse-row"):
+                yield Input(placeholder="/path/to/incremental/backups", id="backup_folder", classes="form-input")
+                yield Button("Browse", variant="primary", id="browse-backup")
 
             yield Label("Archive Folder (Snapshots):", classes="form-label")
-            yield Input(placeholder="/path/to/archived/snapshots", id="archive_folder", classes="form-input")
+            with Horizontal(classes="browse-row"):
+                yield Input(placeholder="/path/to/archived/snapshots", id="archive_folder", classes="form-input")
+                yield Button("Browse", variant="primary", id="browse-archive")
 
             yield Label("Schedule:", classes="form-label")
             yield Input(placeholder="e.g., 12h, 1d, or manual", id="schedule", value="manual", classes="form-input")
 
-            with Container(id="form-buttons"):
+            with Horizontal(id="form-buttons"):
                 yield Button("Save", variant="success", id="save")
                 yield Button("Cancel", variant="error", id="cancel")
+
+    def on_key(self, event: KeyEvent) -> None:
+        if event.key == "escape":
+            self.app.pop_screen()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
             self.app.pop_screen()
+        elif event.button.id in ("browse-source", "browse-backup", "browse-archive"):
+            input_id = {"browse-source": "#source", "browse-backup": "#backup_folder", "browse-archive": "#archive_folder"}[event.button.id]
+
+            def on_path_selected(path: Path):
+                if path:
+                    self.query_one(input_id, Input).value = str(path)
+
+            start = self.query_one(input_id, Input).value or str(Path.home())
+            self.app.push_screen(DirectoryPicker(start), on_path_selected)
         elif event.button.id == "save":
             name = self.query_one("#name", Input).value.strip()
             source = self.query_one("#source", Input).value.strip()
@@ -216,26 +324,83 @@ class BackupEngine:
     def run_backup_process(self, config: dict, log_callback):
         source, backup_folder, archive_folder = config.get("source"), config.get("backup_folder"), config.get("archive_folder")
         if not all([source, backup_folder, archive_folder]): raise ValueError("Incomplete configuration.")
-
-        log_callback(f"▶️ [bold cyan]Rsync:[/bold cyan] {source} -> {backup_folder}"); Path(backup_folder).mkdir(parents=True, exist_ok=True)
-        self._run_command(["rsync", "-a", "--delete", f"{source}/", backup_folder], log_callback)
-
-        log_callback(f"▶️ [bold cyan]Archive:[/bold cyan] Compressing snapshot..."); Path(archive_folder).mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-        archive_path = Path(archive_folder) / f"{Path(source).name}_{timestamp}.tar.gz"
-        self._run_command(["tar", "-czf", str(archive_path), "-C", backup_folder, "."], log_callback)
-        log_callback(f"✅ [bold green]Archive created:[/bold green] {archive_path}")
+        
+        job_name = config.get("name", "backup")
+        lock_file = Path(backup_folder) / f".{job_name}.lock"
+        
+        if lock_file.exists():
+            log_callback("⚠️ Previous run was interrupted. Cleaning up...")
+            lock_file.unlink()
+        
+        lock_file.write_text(str(os.getpid()))
+        
+        try:
+            log_callback(f"▶️ [bold cyan]Rsync:[/bold cyan] {source} -> {backup_folder}")
+            file_count = sum(1 for _ in Path(source).rglob('*') if _.is_file())
+            log_callback(f"📊 Total files to sync: {file_count}")
+            
+            process = subprocess.Popen(
+                ["rsync", "-a", "--delete", "--progress", f"{source}/", backup_folder],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            synced = 0
+            for line in iter(process.stdout.readline, ''):
+                if line:
+                    line = line.strip()
+                    if line.endswith('%'):
+                        log_callback(f"   {line}")
+                    elif 'total size is' in line.lower() or 'speedup is' in line.lower():
+                        log_callback(f"   ✅ {line}")
+                    elif line and not line.startswith('sending'):
+                        log_callback(f"   {line}")
+            process.wait()
+            
+            if process.returncode != 0:
+                raise RuntimeError(f"Rsync failed with code {process.returncode}")
+            
+            log_callback(f"▶️ [bold cyan]Archive:[/bold cyan] Compressing snapshot...")
+            
+            process = subprocess.Popen(
+                ["tar", "-czv", "-C", backup_folder, "-f", str(archive_path), "."],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+            )
+            archived = 0
+            for line in iter(process.stdout.readline, ''):
+                if line:
+                    archived += 1
+                    if archived % 100 == 0:
+                        log_callback(f"   📦 Archived {archived} files...")
+                    line = line.strip()
+                    if len(line) < 80:
+                        log_callback(f"   {line}")
+            process.wait()
+            
+            if process.returncode not in (0, 1):
+                raise RuntimeError(f"Tar failed with code {process.returncode}")
+            
+            log_callback(f"✅ [bold green]Archive created:[/bold green] {archive_path} ({archived} files)")
+        finally:
+            if lock_file.exists():
+                lock_file.unlink()
 
     def _run_command(self, cmd: list[str], log_callback):
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        output_lines = []
         for line in iter(process.stdout.readline, ''):
-            if line: log_callback(line.strip())
-        if process.wait() != 0: raise RuntimeError(f"Command failed: {' '.join(cmd)}")
+            if line: 
+                line = line.strip()
+                output_lines.append(line)
+                log_callback(line)
+        return_code = process.wait()
+        # tar returns 1 for warnings like "file changed as we read it" - not a real error
+        if return_code != 0 and not (cmd[0] == 'tar' and return_code == 1):
+            raise RuntimeError(f"Command failed (code {return_code}): {' '.join(cmd)}\n{output_lines[-1] if output_lines else ''}")
 
 # ------------------------------
 # The Main Textual Application
 # ------------------------------
-class BackupManagerApp(App):
+class BuMBackupManager(App):
+    TITLE = "BuM-BackupManager"
     CSS_PATH = "backup_manager.css"
     jobs = reactive({}, layout=True)
     selected_job_name = reactive(None)
@@ -261,12 +426,28 @@ class BackupManagerApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one(DataTable); table.add_columns("Status", "Job Name", "Schedule", "Last Run"); self.load_jobs(); self.run_worker(self.scheduler_worker, thread=True)
+        table = self.query_one(DataTable)
+        table.add_columns("Status", "Job Name", "Schedule", "Last Run")
+        table.cursor_type = "row"
+        self.load_jobs()
+        # Focus table after loading jobs so cursor is visible
+        table.focus()
+        self.run_worker(self.scheduler_worker, thread=True)
 
     def load_jobs(self) -> None:
-        table = self.query_one(DataTable); table.clear(); configs = self.engine.find_configs(); temp_jobs = {}
-        for config in configs: name = config["name"]; status = JobStatus(name, config["schedule"]); temp_jobs[name] = {"status": status, "config": config}; table.add_row(status.status, status.name, status.schedule, status.last_run, key=name)
-        self.jobs = temp_jobs;
+        table = self.query_one(DataTable)
+        table.clear()
+        configs = self.engine.find_configs()
+        temp_jobs = {}
+        for config in configs:
+            name = config["name"]
+            status = JobStatus(name, config["schedule"])
+            temp_jobs[name] = {"status": status, "config": config}
+            table.add_row(status.status, status.name, status.schedule, status.last_run, key=name)
+        self.jobs = temp_jobs
+        if temp_jobs:
+            first_name = next(iter(temp_jobs.keys()))
+            self.selected_job_name = first_name
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "new-job":
@@ -277,7 +458,7 @@ class BackupManagerApp(App):
             self.push_screen(JobForm(), check_form_result)
 
         elif event.button.id == "run-manual" and self.selected_job_name:
-            self.run_worker(self.job_worker, self.selected_job_name, thread=True, group="backups")
+            self.run_worker(lambda job_name=self.selected_job_name: self.job_worker(job_name), thread=True, group="backups")
 
         elif event.button.id == "delete-job" and self.selected_job_name:
             job_name = self.selected_job_name
@@ -301,7 +482,12 @@ class BackupManagerApp(App):
             md.update("*Select a job from the table to view details.*")
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        self.selected_job_name = event.row_key.value
+        if event.row_key:
+            self.selected_job_name = event.row_key.value
+
+    def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+        if event.row_key:
+            self.selected_job_name = event.row_key.value
 
     def update_history_view(self, config: dict):
         tree = self.query_one("#history Tree")
@@ -340,21 +526,32 @@ class BackupManagerApp(App):
             for n, d in list(self.jobs.items()):
                 s = d["status"]
                 if s.next_run and now >= s.next_run:
-                    self.run_worker(self.job_worker, n, thread=True)
+                    self.run_worker(lambda job=n: self.job_worker(job), thread=True)
                     s.next_run = now + parse(s.schedule)
             time.sleep(30)
 
     def job_worker(self, job_name: str) -> None:
-        log = lambda line: self.post_message(LogMessage(f"[{job_name}] {line}")); config = self.jobs[job_name]["config"]
+        def log(line):
+            self.post_message(LogMessage(f"[{job_name}] {line}"))
+        
+        config = self.jobs[job_name]["config"]
+        
         try:
-            self.call_from_thread(self.query_one(DataTable).update_cell, job_name, "Status", "🕒 Running"); log("🚀 Starting...")
+            self.post_message(JobUpdate(job_name, "🕒 Running", ""))
+            log("🚀 Starting...")
             self.engine.run_backup_process(config, log)
-            self.post_message(JobUpdate(job_name, "✅ Success", datetime.now().strftime("%Y-%m-%d %H:%M"))); log("🎉 Finished.")
+            self.post_message(JobUpdate(job_name, "✅ Success", datetime.now().strftime("%Y-%m-%d %H:%M")))
+            log("🎉 Finished.")
         except Exception as e:
-            self.post_message(JobUpdate(job_name, "❌ Failed", datetime.now().strftime("%Y-%m-%d %H:%M"))); log(f"🔥 FAILED: {e}")
+            self.post_message(JobUpdate(job_name, "❌ Failed", datetime.now().strftime("%Y-%m-%d %H:%M")))
+            log(f"🔥 FAILED: {e}")
 
     def on_job_update(self, message: JobUpdate) -> None:
-        table = self.query_one(DataTable); table.update_cell(message.job_name, "Status", message.status); table.update_cell(message.job_name, "Last Run", message.last_run)
+        if message.job_name in self.jobs:
+            self.jobs[message.job_name]["status"].status = message.status
+            self.jobs[message.job_name]["status"].last_run = message.last_run
+            self.load_jobs()
+            self.selected_job_name = message.job_name
 
     def on_log_message(self, message: LogMessage) -> None:
         self.query_one("#log-view").write_line(message.log_text)
@@ -365,6 +562,11 @@ class BackupManagerApp(App):
 
 
 if __name__ == "__main__":
+    run_app()
+
+
+def run_app() -> None:
+    """Entry point for CLI."""
     missing_deps = check_system_dependencies()
     if missing_deps:
         print(f"ERROR: Missing required system commands: {', '.join(missing_deps)}")
@@ -403,4 +605,4 @@ if __name__ == "__main__":
     with open("backup_manager.css", "w") as f:
         f.write(css)
 
-    BackupManagerApp().run()
+    BuMBackupManager().run()

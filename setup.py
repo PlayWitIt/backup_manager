@@ -16,7 +16,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "backup-manager=backup_manager:BackupManagerApp",
+            "bum=backup_manager:run_app",
         ],
     },
 )

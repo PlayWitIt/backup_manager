@@ -1,28 +1,76 @@
+#dashboard > Button {
+    width: 100%;
+    margin-bottom: 1;
+}
+#details { height: 1fr; border: solid $accent; padding: 1; }
+#detail-buttons { height: auto; }
+#detail-buttons > Button { margin-right: 1; }
+#history-view { height: 1fr; }
+Tree, DirectoryTree { padding: 1; width: 100%; height: 1fr; }
 
-    #dashboard > Button {
-        width: 100%;
-        margin-bottom: 1;
-    }
-    #details { height: 1fr; border: solid $accent; padding: 1; }
-    #history-view { height: 1fr; }
-    Tree { padding: 1; width: 100%; height: 1fr; }
-    #job-form {
-        grid-size: 2;
-        grid-gutter: 1 2;
-        padding: 0 1;
-        width: 80w;
-        height: 12;
-        border: thick $primary;
-        background: $surface;
-    }
-    .form-label { text-align: right; }
-    .form-input { width: 1fr; }
-    #form-buttons {
-        column-span: 2;
-        align-horizontal: center;
-        padding-top: 1;
-    }
-    #form-buttons > Button {
-        margin: 0 2;
-    }
-    
+#job-form {
+    width: 70vw;
+    height: auto;
+    padding: 2 3;
+    border: thick $primary;
+    background: $surface;
+}
+
+#job-form > Label {
+    margin-top: 1;
+    margin-bottom: 0;
+}
+
+#job-form > Label.form-title {
+    text-align: center;
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+#job-form > Label.form-label {
+    text-style: bold;
+    color: $text;
+}
+
+#job-form .form-row {
+    margin-bottom: 1;
+}
+
+#job-form .form-row Horizontal {
+    height: auto;
+}
+
+#job-form .form-input {
+    width: 100%;
+    margin-bottom: 1;
+}
+
+#job-form .browse-row Horizontal {
+    width: 100%;
+    height: auto;
+}
+
+#job-form .browse-row Input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#form-buttons {
+    margin-top: 2;
+    align-horizontal: center;
+}
+
+#form-buttons > Button {
+    margin: 0 2;
+}
+
+#picker-container { height: 80vh; padding: 1 2; }
+#picker-container Horizontal { height: auto; margin-bottom: 1; }
+#picker-label { margin-bottom: 1; text-style: bold; }
+#dir-tree { height: 90%; width: 100%; }
+#new-folder-row { height: auto; }
+#new-folder-row Input { width: 1fr; margin-right: 1; }
+
+#picker-buttons { height: auto; align-horizontal: center; margin-top: 1; }
+#picker-buttons > Button { margin: 0 2; }

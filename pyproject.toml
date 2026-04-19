@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-backup-manager = "backup_manager:BackupManagerApp"
+bum = "backup_manager:run_app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
