@@ -9,7 +9,7 @@ description = "A Textual-based backup manager with scheduling and archive manage
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "PlayWit", email = "playwititmyway@gmail.com" }
+    { name = "PlayWit Creations", email = "playwititmyway@gmail.com" }
 ]
 requires-python = ">=3.11"
 dependencies = [
