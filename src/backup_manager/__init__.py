@@ -276,6 +276,8 @@ class BackupEngine:
                 "backup_folder": parser.get("backup", "backup_folder", fallback=None),
                 "archive_folder": parser.get("backup", "archive_folder", fallback=None),
                 "schedule": parser.get("schedule", "interval", fallback="manual"),
+                "status": parser.get("backup", "status", fallback="⚪ Pending"),
+                "last_run": parser.get("backup", "last_run", fallback="Never"),
                 "_path": path
             })
         return configs
@@ -287,13 +289,31 @@ class BackupEngine:
             "name": job_data.name,
             "source": job_data.source,
             "backup_folder": job_data.backup_folder,
-            "archive_folder": job_data.archive_folder
+            "archive_folder": job_data.archive_folder,
+            "last_run": "Never",
+            "status": "⚪ Pending"
         }
         config["schedule"] = {"interval": job_data.schedule}
 
         config_path = self.config_dir / job_data.filename
         with open(config_path, "w") as configfile:
             config.write(configfile)
+
+    def update_job_status(self, job_name: str, status: str, last_run: str):
+        """Update job status and last run time in config."""
+        for config in self.find_configs():
+            if config["name"] == job_name:
+                config["status"] = status
+                config["last_run"] = last_run
+                # Write back to file
+                config_path = config.get("_path")
+                if config_path:
+                    parser = configparser.ConfigParser()
+                    parser["backup"] = {k: v for k, v in config.items() if k != "_path"}
+                    parser["schedule"] = {"interval": config.get("schedule", "manual")}
+                    with open(config_path, "w") as f:
+                        parser.write(f)
+                break
 
     def delete_job(self, job_name: str) -> bool:
         """Delete a job config file by name. Returns True if deleted."""
@@ -321,7 +341,7 @@ class BackupEngine:
         try: result = subprocess.check_output(["tar", "-tf", str(archive_path)], text=True); return result.strip().split("\n")
         except: return []
 
-    def run_backup_process(self, config: dict, log_callback):
+    def run_backup_process(self, config: dict, log_callback, set_status=None):
         source, backup_folder, archive_folder = config.get("source"), config.get("backup_folder"), config.get("archive_folder")
         if not all([source, backup_folder, archive_folder]): raise ValueError("Incomplete configuration.")
         
@@ -335,7 +355,7 @@ class BackupEngine:
         lock_file.write_text(str(os.getpid()))
         
         try:
-            log_callback(f"▶️ [bold cyan]Rsync:[/bold cyan] {source} -> {backup_folder}")
+            log_callback(f"▶️ [bold cyan]Syncing:[/bold cyan] {source} -> {backup_folder}")
             file_count = sum(1 for _ in Path(source).rglob('*') if _.is_file())
             log_callback(f"📊 Total files to sync: {file_count}")
             
@@ -358,7 +378,12 @@ class BackupEngine:
             if process.returncode != 0:
                 raise RuntimeError(f"Rsync failed with code {process.returncode}")
             
-            log_callback(f"▶️ [bold cyan]Archive:[/bold cyan] Compressing snapshot...")
+            if set_status:
+                set_status("📦 Archiving")
+            log_callback(f"▶️ [bold cyan]Archiving:[/bold cyan] Compressing snapshot...")
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            archive_path = Path(archive_folder) / f"{Path(source).name}_{timestamp}.tar.gz"
+            Path(archive_folder).mkdir(parents=True, exist_ok=True)
             
             process = subprocess.Popen(
                 ["tar", "-czv", "-C", backup_folder, "-f", str(archive_path), "."],
@@ -436,18 +461,22 @@ class BuMBackupManager(App):
 
     def load_jobs(self) -> None:
         table = self.query_one(DataTable)
+        current_selection = self.selected_job_name
         table.clear()
         configs = self.engine.find_configs()
         temp_jobs = {}
         for config in configs:
             name = config["name"]
-            status = JobStatus(name, config["schedule"])
+            status_str = config.get("status", "⚪ Pending")
+            last_run = config.get("last_run", "Never")
+            status = JobStatus(name, config["schedule"], last_run=last_run, status=status_str)
             temp_jobs[name] = {"status": status, "config": config}
             table.add_row(status.status, status.name, status.schedule, status.last_run, key=name)
         self.jobs = temp_jobs
-        if temp_jobs:
-            first_name = next(iter(temp_jobs.keys()))
-            self.selected_job_name = first_name
+        if current_selection and current_selection in temp_jobs:
+            self.selected_job_name = current_selection
+        elif temp_jobs:
+            self.selected_job_name = next(iter(temp_jobs.keys()))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "new-job":
@@ -536,22 +565,29 @@ class BuMBackupManager(App):
         
         config = self.jobs[job_name]["config"]
         
+        def set_status(status):
+            self.post_message(JobUpdate(job_name, status, ""))
+        
         try:
-            self.post_message(JobUpdate(job_name, "🕒 Running", ""))
-            log("🚀 Starting...")
-            self.engine.run_backup_process(config, log)
-            self.post_message(JobUpdate(job_name, "✅ Success", datetime.now().strftime("%Y-%m-%d %H:%M")))
+            set_status("🔄 Syncing")
+            log("🚀 Starting sync...")
+            self.engine.run_backup_process(config, log, set_status)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            self.engine.update_job_status(job_name, "✅ Success", timestamp)
+            self.post_message(JobUpdate(job_name, "✅ Success", timestamp))
             log("🎉 Finished.")
         except Exception as e:
-            self.post_message(JobUpdate(job_name, "❌ Failed", datetime.now().strftime("%Y-%m-%d %H:%M")))
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            self.engine.update_job_status(job_name, "❌ Failed", timestamp)
+            self.post_message(JobUpdate(job_name, "❌ Failed", timestamp))
             log(f"🔥 FAILED: {e}")
 
     def on_job_update(self, message: JobUpdate) -> None:
         if message.job_name in self.jobs:
             self.jobs[message.job_name]["status"].status = message.status
-            self.jobs[message.job_name]["status"].last_run = message.last_run
+            if message.last_run:
+                self.jobs[message.job_name]["status"].last_run = message.last_run
             self.load_jobs()
-            self.selected_job_name = message.job_name
 
     def on_log_message(self, message: LogMessage) -> None:
         self.query_one("#log-view").write_line(message.log_text)
