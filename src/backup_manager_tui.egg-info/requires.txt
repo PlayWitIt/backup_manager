@@ -1,0 +1,2 @@
+textual>=0.80.0
+platformdirs>=4.0.0

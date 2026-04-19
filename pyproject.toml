@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backup-manager-tui"
+version = "0.1.0"
+description = "A Textual-based backup manager with scheduling and archive management"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Your Name", email = "your@email.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "textual>=0.80.0",
+    "platformdirs>=4.0.0",
+]
+
+[project.scripts]
+backup-manager = "backup_manager:BackupManagerApp"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+backup_manager = ["*.css"]

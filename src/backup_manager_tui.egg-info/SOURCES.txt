@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+setup.py
+src/backup_manager/__init__.py
+src/backup_manager/backup_manager.css
+src/backup_manager_tui.egg-info/PKG-INFO
+src/backup_manager_tui.egg-info/SOURCES.txt
+src/backup_manager_tui.egg-info/dependency_links.txt
+src/backup_manager_tui.egg-info/entry_points.txt
+src/backup_manager_tui.egg-info/requires.txt
+src/backup_manager_tui.egg-info/top_level.txt

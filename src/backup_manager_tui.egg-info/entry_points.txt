@@ -1,0 +1,2 @@
+[console_scripts]
+backup-manager = backup_manager:BackupManagerApp
