@@ -3,13 +3,13 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "backup-manager-tui"
+name = "BuM-BackupManager"
 version = "0.1.0"
 description = "A Textual-based backup manager with scheduling and archive management"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
-    { name = "Your Name", email = "your@email.com" }
+    { name = "PlayWit", email = "playwititmyway@gmail.com" }
 ]
 requires-python = ">=3.11"
 dependencies = [
