@@ -5,10 +5,14 @@ import shutil
 import configparser
 import time
 import re
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Dependency to find the correct user config directory on any OS
 import platformdirs
@@ -76,6 +80,40 @@ def check_system_dependencies() -> list[str]:
         if not shutil.which(cmd):
             missing.append(cmd)
     return missing
+
+
+def resolve_ntfs_path(path: str) -> str:
+    """Resolve NTFS mount path with encoded characters."""
+    if not path or not Path("/run/media").exists():
+        return path
+    if Path(path).exists():
+        return path
+    for mount in Path("/run/media").iterdir():
+        if not mount.is_dir():
+            continue
+        for sub in mount.iterdir():
+            if not sub.is_dir():
+                continue
+            if sub.name.startswith("Seagate") or "Seagate" in sub.name:
+                if "Backups" in path:
+                    fixed = str(sub / path.split("Seagate Portable Drive/")[-1].lstrip("/"))
+                    if Path(fixed).exists():
+                        return fixed
+    return path
+    if Path(path).exists():
+        return path
+    for mount in Path("/run/media").iterdir():
+        if not mount.is_dir():
+            continue
+        for sub in mount.iterdir():
+            if not sub.is_dir():
+                continue
+            clean_name = sub.name.replace("\\x", "").replace("\\", "").replace("20", " ")
+            if clean_name.startswith("Seagate"):
+                test_path = path.replace(str(mount), str(sub)).replace("Seagate Portable Drive", sub.name)
+                if Path(test_path).exists():
+                    return test_path
+    return path
 
 
 def validate_paths(source: str, backup_folder: str, archive_folder: str) -> tuple[bool, str]:
@@ -269,17 +307,21 @@ class BackupEngine:
     def find_configs(self) -> list[dict]:
         configs = []
         for path in sorted(self.config_dir.glob("*.ini")):
-            parser = configparser.ConfigParser(); parser.read(path)
-            configs.append({
-                "name": parser.get("backup", "name", fallback=path.stem),
-                "source": parser.get("backup", "source", fallback=None),
-                "backup_folder": parser.get("backup", "backup_folder", fallback=None),
-                "archive_folder": parser.get("backup", "archive_folder", fallback=None),
-                "schedule": parser.get("schedule", "interval", fallback="manual"),
-                "status": parser.get("backup", "status", fallback="⚪ Pending"),
-                "last_run": parser.get("backup", "last_run", fallback="Never"),
-                "_path": path
-            })
+            try:
+                parser = configparser.ConfigParser()
+                parser.read(path)
+                configs.append({
+                    "name": parser.get("backup", "name", fallback=path.stem),
+                    "source": parser.get("backup", "source", fallback=None),
+                    "backup_folder": parser.get("backup", "backup_folder", fallback=None),
+                    "archive_folder": parser.get("backup", "archive_folder", fallback=None),
+                    "schedule": parser.get("schedule", "interval", fallback="manual"),
+                    "status": parser.get("backup", "status", fallback="⚪ Pending"),
+                    "last_run": parser.get("backup", "last_run", fallback="Never"),
+                    "_path": path
+                })
+            except Exception as e:
+                logger.warning(f"Failed to parse config {path}: {e}")
         return configs
 
     def save_new_job(self, job_data: JobData):
@@ -296,33 +338,47 @@ class BackupEngine:
         config["schedule"] = {"interval": job_data.schedule}
 
         config_path = self.config_dir / job_data.filename
-        with open(config_path, "w") as configfile:
-            config.write(configfile)
+        try:
+            with open(config_path, "w") as configfile:
+                config.write(configfile)
+            logger.info(f"Saved new job config: {job_data.name}")
+        except Exception as e:
+            logger.error(f"Failed to save job {job_data.name}: {e}")
+            raise
 
     def update_job_status(self, job_name: str, status: str, last_run: str):
         """Update job status and last run time in config."""
         for config in self.find_configs():
             if config["name"] == job_name:
                 config["status"] = status
-                config["last_run"] = last_run
-                # Write back to file
+                if last_run:
+                    config["last_run"] = last_run
                 config_path = config.get("_path")
                 if config_path:
-                    parser = configparser.ConfigParser()
-                    parser["backup"] = {k: v for k, v in config.items() if k != "_path"}
-                    parser["schedule"] = {"interval": config.get("schedule", "manual")}
-                    with open(config_path, "w") as f:
-                        parser.write(f)
+                    try:
+                        parser = configparser.ConfigParser()
+                        parser["backup"] = {k: v for k, v in config.items() if k != "_path"}
+                        parser["schedule"] = {"interval": config.get("schedule", "manual")}
+                        with open(config_path, "w") as f:
+                            parser.write(f)
+                        logger.info(f"Updated status for {job_name}: {status}")
+                    except Exception as e:
+                        logger.error(f"Failed to update status for {job_name}: {e}")
+                        raise
                 break
 
     def delete_job(self, job_name: str) -> bool:
         """Delete a job config file by name. Returns True if deleted."""
         for path in self.config_dir.glob("*.ini"):
-            parser = configparser.ConfigParser()
-            parser.read(path)
-            if parser.get("backup", "name", fallback=path.stem) == job_name:
-                path.unlink()
-                return True
+            try:
+                parser = configparser.ConfigParser()
+                parser.read(path)
+                if parser.get("backup", "name", fallback=path.stem) == job_name:
+                    path.unlink()
+                    logger.info(f"Deleted job: {job_name}")
+                    return True
+            except Exception as e:
+                logger.warning(f"Failed to read config {path}: {e}")
         return False
 
     def get_config_by_name(self, job_name: str) -> Optional[dict]:
@@ -334,25 +390,75 @@ class BackupEngine:
 
     def get_archive_history(self, config: dict) -> list[Path]:
         archive_folder = config.get("archive_folder")
-        if not archive_folder or not Path(archive_folder).is_dir(): return []
-        return sorted(Path(archive_folder).glob("*.tar.gz"), reverse=True)
+        if not archive_folder or not Path(archive_folder).is_dir():
+            return []
+        try:
+            return sorted(Path(archive_folder).glob("*.tar.gz"), reverse=True)
+        except Exception as e:
+            logger.warning(f"Failed to list archives in {archive_folder}: {e}")
+            return []
 
     def list_archive_contents(self, archive_path: Path) -> list[str]:
-        try: result = subprocess.check_output(["tar", "-tf", str(archive_path)], text=True); return result.strip().split("\n")
-        except: return []
+        try:
+            result = subprocess.check_output(
+                ["tar", "-tf", str(archive_path)],
+                text=True
+            )
+            return result.strip().split("\n")
+        except FileNotFoundError:
+            logger.error("tar command not found. Please install tar.")
+            return []
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to list archive contents: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error reading archive: {e}")
+            return []
 
     def run_backup_process(self, config: dict, log_callback, set_status=None):
-        source, backup_folder, archive_folder = config.get("source"), config.get("backup_folder"), config.get("archive_folder")
-        if not all([source, backup_folder, archive_folder]): raise ValueError("Incomplete configuration.")
-        
+        source = config.get("source")
+        backup_folder = config.get("backup_folder")
+        archive_folder = config.get("archive_folder")
+
+        if not all([source, backup_folder, archive_folder]):
+            logger.error(f"Incomplete configuration for job: {config.get('name', 'unknown')}")
+            raise ValueError("Incomplete configuration.")
+
+        if not shutil.which("rsync"):
+            raise RuntimeError("rsync command not found. Please install rsync.")
+
         job_name = config.get("name", "backup")
+
+        if not shutil.which("tar"):
+            raise RuntimeError("tar command not found. Please install tar.")
+
+        backup_folder = resolve_ntfs_path(backup_folder)
+        source = resolve_ntfs_path(source)
+        archive_folder = resolve_ntfs_path(archive_folder)
+        backup_path = Path(backup_folder)
+        try:
+            backup_path.mkdir(parents=True, exist_ok=True)
+        except PermissionError as e:
+            logger.error(f"Permission denied accessing {backup_folder}: {e}")
+            raise RuntimeError(f"Permission denied accessing {backup_folder}. Check mount options and permissions.")
+        except OSError as e:
+            logger.error(f"OS error creating backup folder {backup_folder}: {e}")
+            raise RuntimeError(f"Cannot access backup folder {backup_folder}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to create backup folder {backup_folder}: {e}")
+            raise
+
         lock_file = Path(backup_folder) / f".{job_name}.lock"
-        
+
         if lock_file.exists():
             log_callback("⚠️ Previous run was interrupted. Cleaning up...")
             lock_file.unlink()
-        
-        lock_file.write_text(str(os.getpid()))
+
+        try:
+            lock_file.write_text(str(os.getpid()))
+        except Exception as e:
+            logger.error(f"Failed to create lock file: {e}")
+            raise
         
         try:
             log_callback(f"▶️ [bold cyan]Syncing:[/bold cyan] {source} -> {backup_folder}")
@@ -569,6 +675,7 @@ class BuMBackupManager(App):
             self.post_message(JobUpdate(job_name, status, ""))
         
         try:
+            self.engine.update_job_status(job_name, "🔄 Syncing", "")
             set_status("🔄 Syncing")
             log("🚀 Starting sync...")
             self.engine.run_backup_process(config, log, set_status)

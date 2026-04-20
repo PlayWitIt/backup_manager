@@ -1,2 +1,2 @@
 [console_scripts]
-backup-manager = backup_manager:BackupManagerApp
+bum = backup_manager:run_app
