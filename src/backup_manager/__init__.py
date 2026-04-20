@@ -692,18 +692,23 @@ class BuMBackupManager(App):
             self.engine.update_job_status(job_name, "✅ Success", timestamp)
             set_status("✅ Success")
             log("🎉 Finished.")
+            # Reload once at the end to sync config to UI
+            self.call_later(self.load_jobs)
         except Exception as e:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
             self.engine.update_job_status(job_name, "❌ Failed", timestamp)
             set_status("❌ Failed")
             log(f"🔥 FAILED: {e}")
+            # Reload once at the end to sync config to UI
+            self.call_later(self.load_jobs)
 
     def on_job_update(self, message: JobUpdate) -> None:
+        # Status already updated via call_later in set_status()
+        # This handler just syncs the backend state
         if message.job_name in self.jobs:
             self.jobs[message.job_name]["status"].status = message.status
             if message.last_run:
                 self.jobs[message.job_name]["status"].last_run = message.last_run
-            self.load_jobs()
 
     def on_log_message(self, message: LogMessage) -> None:
         self.query_one("#log-view").write_line(message.log_text)
