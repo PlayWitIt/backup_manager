@@ -668,12 +668,21 @@ class BuMBackupManager(App):
     def job_worker(self, job_name: str) -> None:
         def log(line):
             self.post_message(LogMessage(f"[{job_name}] {line}"))
-        
+
         config = self.jobs[job_name]["config"]
-        
+
         def set_status(status):
+            # Post message for backend
             self.post_message(JobUpdate(job_name, status, ""))
-        
+            # Update UI immediately in main thread - bypass message queue
+            def update_ui():
+                if job_name in self.jobs:
+                    self.jobs[job_name]["status"].status = status
+                    table = self.query_one(DataTable)
+                    if job_name in table.rows:
+                        table.update_cell(job_name, "Status", status)
+            self.call_later(update_ui)
+
         try:
             self.engine.update_job_status(job_name, "🔄 Syncing", "")
             set_status("🔄 Syncing")
@@ -681,12 +690,12 @@ class BuMBackupManager(App):
             self.engine.run_backup_process(config, log, set_status)
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
             self.engine.update_job_status(job_name, "✅ Success", timestamp)
-            self.post_message(JobUpdate(job_name, "✅ Success", timestamp))
+            set_status("✅ Success")
             log("🎉 Finished.")
         except Exception as e:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
             self.engine.update_job_status(job_name, "❌ Failed", timestamp)
-            self.post_message(JobUpdate(job_name, "❌ Failed", timestamp))
+            set_status("❌ Failed")
             log(f"🔥 FAILED: {e}")
 
     def on_job_update(self, message: JobUpdate) -> None:
