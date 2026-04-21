@@ -574,6 +574,9 @@ class BuMBackupManager(App):
         for config in configs:
             name = config["name"]
             status_str = config.get("status", "⚪ Pending")
+            # Reset stale "Syncing"/"Archiving" status to pending on initial load
+            if status_str in ("🔄 Syncing", "📦 Archiving"):
+                status_str = "⚪ Pending"
             last_run = config.get("last_run", "Never")
             status = JobStatus(name, config["schedule"], last_run=last_run, status=status_str)
             temp_jobs[name] = {"status": status, "config": config}
@@ -672,16 +675,21 @@ class BuMBackupManager(App):
         config = self.jobs[job_name]["config"]
 
         def set_status(status):
-            # Post message for backend
             self.post_message(JobUpdate(job_name, status, ""))
-            # Update UI immediately in main thread - bypass message queue
             def update_ui():
-                if job_name in self.jobs:
-                    self.jobs[job_name]["status"].status = status
-                    table = self.query_one(DataTable)
-                    if job_name in table.rows:
-                        table.update_cell(job_name, "Status", status)
+                if job_name not in self.jobs:
+                    log(f"[DEBUG] job not found in self.jobs!")
+                    return
+                self.jobs[job_name]["status"].status = status
+                log(f"[DEBUG] update_ui: {job_name} -> {status}")
+                table = self.query_one(DataTable)
+                table.clear()
+                for j_name, job_data in self.jobs.items():
+                    s = job_data["status"]
+                    table.add_row(s.status, s.name, s.schedule, s.last_run, key=j_name)
+                log(f"[DEBUG] table updated")
             self.call_later(update_ui)
+            log(f"[DEBUG] set_status called: {job_name} -> {status}")
 
         try:
             self.engine.update_job_status(job_name, "🔄 Syncing", "")
