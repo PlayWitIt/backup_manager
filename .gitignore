@@ -14,6 +14,35 @@ configs/*.conf~
 *.tmp
 *.DS_Store
 
+# Python-specific ignores
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+
+# Packaging / build outputs
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing / tooling caches
+.pytest_cache/
+.mypy_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
 # Ignore any system files
 
 Thumbs.db

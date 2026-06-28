@@ -329,9 +329,9 @@ class BackupEngine:
         config = configparser.ConfigParser()
         config["backup"] = {
             "name": job_data.name,
-            "source": job_data.source,
-            "backup_folder": job_data.backup_folder,
-            "archive_folder": job_data.archive_folder,
+            "source": job_data.source or "",
+            "backup_folder": job_data.backup_folder or "",
+            "archive_folder": job_data.archive_folder or "",
             "last_run": "Never",
             "status": "⚪ Pending"
         }
@@ -357,7 +357,7 @@ class BackupEngine:
                 if config_path:
                     try:
                         parser = configparser.ConfigParser()
-                        parser["backup"] = {k: v for k, v in config.items() if k != "_path"}
+                        parser["backup"] = {k: (v if v is not None else "") for k, v in config.items() if k != "_path"}
                         parser["schedule"] = {"interval": config.get("schedule", "manual")}
                         with open(config_path, "w") as f:
                             parser.write(f)
@@ -678,18 +678,14 @@ class BuMBackupManager(App):
             self.post_message(JobUpdate(job_name, status, ""))
             def update_ui():
                 if job_name not in self.jobs:
-                    log(f"[DEBUG] job not found in self.jobs!")
                     return
                 self.jobs[job_name]["status"].status = status
-                log(f"[DEBUG] update_ui: {job_name} -> {status}")
                 table = self.query_one(DataTable)
                 table.clear()
                 for j_name, job_data in self.jobs.items():
                     s = job_data["status"]
                     table.add_row(s.status, s.name, s.schedule, s.last_run, key=j_name)
-                log(f"[DEBUG] table updated")
             self.call_later(update_ui)
-            log(f"[DEBUG] set_status called: {job_name} -> {status}")
 
         try:
             self.engine.update_job_status(job_name, "🔄 Syncing", "")
@@ -720,6 +716,36 @@ class BuMBackupManager(App):
 
     def on_log_message(self, message: LogMessage) -> None:
         self.query_one("#log-view").write_line(message.log_text)
+
+    def on_log_view_selection_changed(self, event) -> None:
+        self._copy_selection_from_focus()
+
+    def _copy_selection_from_focus(self) -> None:
+        widget = self.focused
+        if widget is None:
+            return
+        try:
+            text = None
+            if hasattr(widget, 'text_selection') and widget.text_selection:
+                sel = widget.text_selection
+                if hasattr(sel, 'extract') and hasattr(widget, '_lines'):
+                    try:
+                        text = sel.extract('\n'.join(widget._lines))
+                    except Exception:
+                        pass
+            elif hasattr(widget, 'get_selection'):
+                selection = widget.get_selection()
+                if selection:
+                    text, _ = selection
+            
+            if text:
+                self.copy_to_clipboard(text)
+                print(f"[AUTO-COPY] Copied: {text[:50]}...")
+        except Exception as e:
+            pass
+
+    def on_click(self, event) -> None:
+        self._copy_selection_from_focus()
 
     def on_job_deleted(self, message: JobDeleted) -> None:
         self.selected_job_name = None
